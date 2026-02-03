@@ -1,5 +1,8 @@
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+
+from bs4 import BeautifulSoup
+import urllib.robotparser
 
 def scraper(url, resp):
     links = extract_next_links(url, resp)
@@ -15,7 +18,37 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    return list()
+
+    # List for urls
+    url_list = []
+
+    # check reponse status
+    if resp.status != 200:
+        # invalid response, return empty list
+        return url_list
+
+    # Parse content
+    try:
+        soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+        
+            if not href or href.strip() == '':
+                continue
+
+            abs_url = urljoin(url, href)
+            parsed_url = urlparse(abs_url)
+            if parsed_url.fragment:
+                abs_url = parsed_url.scheme + "://" + parsed_url.netloc + parsed_url.path + ("?" + parsed_url.query if parsed_url.query else "")
+            
+            # Add to list
+            url_list.append(abs_url)
+    except Exception as e:
+        print(f"Parsing Error in {url}: {e}")
+
+    # set to remove duplicates
+    return list(set(url_list))
+
 
 def is_valid(url):
     # Decide whether to crawl this url or not. 
@@ -25,7 +58,48 @@ def is_valid(url):
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
-        return not re.match(
+        
+        # Check for robots.txt disallow rules
+        
+        
+        # Trap checks
+        # Login pages
+        login_patterns = ["login", "sign_in", "signin", "log_in", "auth"]
+        for pattern in login_patterns:
+            if pattern in parsed.path.lower():
+                return False
+            
+        # Calendar pages
+        if re.search(r"/(calendar|events?)/", parsed.path.lower()):
+            return False
+        if re.search(r"/\d{4}/\d{1,2}/\d{1,2}/", parsed.path.lower()):
+            return False
+        
+        # Dynamic URL patterns
+        dynamic_patterns = [
+            r"\?.*sessionid=", r"/search\?", r"/results\?", r'cfid=', r'cid=',
+            r'\?ref=', r'\?replytocom=', r'utm_', r'fbclid=', r'gclid=',
+            r'sid=', r'view=', r'sort=', r'order=', r'page=', r'filter=',
+            r'cftoken=', r'jessionid=', r'php?s?ess?']
+        for pattern in dynamic_patterns:
+            if re.search(pattern, parsed.query.lower()):
+                return False
+
+        # Bad url types
+        bad_url_patterns = [
+            r'/cgi-bin/', r'/wp-admin/', r'/wp-content/', r'/administrator/', r'/phpmyadmin/',
+            r'server-status', r'/.git/', r'/.svn/', r'/.env'
+        ]
+        for pattern in bad_url_patterns:
+            if re.search(pattern, parsed.path.lower()):
+                return False
+            
+        # Too many parameters
+        if len(parsed.query.split('&')) > 10:
+            return False
+
+        # File extensions
+        if re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
             + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
@@ -33,8 +107,72 @@ def is_valid(url):
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
-            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+            + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower()): 
+            return False
+        
+        # Normalize URL
+        url = normalize_url(url)
+
+
+        # Check robots.txt
+        if not robots_allowed(url):
+            return False
+        
+        return True
 
     except TypeError:
         print ("TypeError for ", parsed)
         raise
+
+
+def robots_allowed(url):
+    # Check robots.txt for url
+    parsed = urlparse(url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    rp = urllib.robotparser.RobotFileParser()
+
+    try:
+        rp.set_url(robots_url)
+        rp.read()
+
+    except Exception as e:
+        print(f"Error checking robots.txt in {url}: {e}")
+    
+    if rp:
+        return rp.can_fetch("*", url)
+    return True
+
+
+def normalize_url(url):
+    parsed = urlparse(url)
+    
+    if parsed.port == 80 or parsed.port == 443:
+        netloc = parsed.hostname
+    else:
+        netloc = parsed.netloc
+    
+    # Remove fragment
+    normalized = parsed._replace(netloc=netloc, fragment='')
+
+    scheme = normalized.scheme.lower()
+    netloc = netloc.lower()
+
+    query_params = parsed.query.split('&')
+    if query_params and query_params != ['']:
+        query_params.sort()
+        query = '&'.join(query_params)
+    else:
+        query = ""
+    
+    # Remove trailing slash
+    path = parsed.path.rstrip('/')
+    if not path:
+        path = '/'
+    
+    normalized = f"{scheme}://{netloc}{path}?{query}" if query else f"{scheme}://{netloc}{path}"
+    return normalized
+
+
+
+    
+
