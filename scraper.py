@@ -4,6 +4,14 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 import urllib.robotparser
 
+robot_cache = None
+
+def get_robot_cache():
+    global robot_cache
+    if robot_cache is None:
+        robot_cache = RobotParserCache()
+    return robot_cache
+
 def scraper(url, resp):
     links = extract_next_links(url, resp)
     return [link for link in links if is_valid(link)]
@@ -37,17 +45,16 @@ def extract_next_links(url, resp):
                 continue
 
             abs_url = urljoin(url, href)
-            parsed_url = urlparse(abs_url)
-            if parsed_url.fragment:
-                abs_url = parsed_url.scheme + "://" + parsed_url.netloc + parsed_url.path + ("?" + parsed_url.query if parsed_url.query else "")
             
             # Add to list
             url_list.append(abs_url)
     except Exception as e:
-        print(f"Parsing Error in {url}: {e}")
+        # print(f"Parsing Error in {url}: {e}")
+        return []
+        
 
     # set to remove duplicates
-    return list(set(url_list))
+    return list(dict.fromkeys(url_list))
 
 
 def is_valid(url):
@@ -55,13 +62,21 @@ def is_valid(url):
     # If you decide to crawl it, return True; otherwise return False.
     # There are already some conditions that return False.
     try:
+        # Normalize URL
+        url = normalize_url(url)
         parsed = urlparse(url)
+
         if parsed.scheme not in set(["http", "https"]):
             return False
         
-        # Check for robots.txt disallow rules
+        # Domain check
+        allowed_domains = [
+            'ics.uci.edu', 'cs.uci.edu', 'informatics.uci.edu',
+            'stat.uci.edu']
         
-        
+        if not any(parsed.netloc.lower().endswith(domain) for domain in allowed_domains):
+            return False
+
         # Trap checks
         # Login pages
         login_patterns = ["login", "sign_in", "signin", "log_in", "auth"]
@@ -77,10 +92,11 @@ def is_valid(url):
         
         # Dynamic URL patterns
         dynamic_patterns = [
-            r"\?.*sessionid=", r"/search\?", r"/results\?", r'cfid=', r'cid=',
-            r'\?ref=', r'\?replytocom=', r'utm_', r'fbclid=', r'gclid=',
+            r'cfid=', r'cid=', r'sessionid=', r'session=', r'ssid=',
+            r'ref=', r'replytocom=', r'utm_', r'fbclid=', r'gclid=',
             r'sid=', r'view=', r'sort=', r'order=', r'page=', r'filter=',
-            r'cftoken=', r'jessionid=', r'php?s?ess?']
+            r'cftoken=', r'jsessionid=']
+        
         for pattern in dynamic_patterns:
             if re.search(pattern, parsed.query.lower()):
                 return False
@@ -95,7 +111,7 @@ def is_valid(url):
                 return False
             
         # Too many parameters
-        if len(parsed.query.split('&')) > 10:
+        if parsed.query and len(parsed.query.split('&')) > 10:
             return False
 
         # File extensions
@@ -109,38 +125,50 @@ def is_valid(url):
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower()): 
             return False
-        
-        # Normalize URL
-        url = normalize_url(url)
-
 
         # Check robots.txt
-        if not robots_allowed(url):
+        if not get_robot_cache().robots_allowed(url):
             return False
         
         return True
 
     except TypeError:
-        print ("TypeError for ", parsed)
-        raise
+        # print ("TypeError for ", parsed)
+        return False
+    except ValueError:
+        # print ("ValueError for ", parsed)
+        return False
 
 
-def robots_allowed(url):
-    # Check robots.txt for url
-    parsed = urlparse(url)
-    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-    rp = urllib.robotparser.RobotFileParser()
+class RobotParserCache:
+    def __init__(self, timeout=5):
+        self.cache = {}
+        self.timeout = timeout
 
-    try:
-        rp.set_url(robots_url)
-        rp.read()
+    def robots_allowed(self, url, user_agent="CS121Crawler"):
+        # Check robots.txt for url
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        robots_url = f"{base_url}/robots.txt"
 
-    except Exception as e:
-        print(f"Error checking robots.txt in {url}: {e}")
-    
-    if rp:
-        return rp.can_fetch("*", url)
-    return True
+        if base_url not in self.cache:
+            rp = urllib.robotparser.RobotFileParser()
+
+            try:
+                rp.set_url(robots_url)
+                with urllib.request.urlopen(robots_url, timeout=self.timeout) as response:
+                    content = response.read()
+                    rp.parse(content.decode('utf-8').splitlines())
+                self.cache[base_url] = rp
+            except Exception as e:
+                print(f"Error checking robots.txt in {url}: {e}")
+                self.cache[base_url] = None
+        
+        rp = self.cache.get(base_url)
+
+        if rp:
+            return rp.can_fetch(user_agent, url)
+        return True
 
 
 def normalize_url(url):
