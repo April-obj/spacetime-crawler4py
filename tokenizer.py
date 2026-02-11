@@ -38,16 +38,17 @@ def tokenize(text):
         segment_tokens = buffer_filtered.lower().split()
         token_list.extend(segment_tokens)
 
-    filtered_tokens = []
-    for token in token_list:
-        if len(token) == 1 and token not in {"a", "i"}:
-            continue
-        if token.isdigit():
-            continue
-        filtered_tokens.append(token)  
+    # filtered_tokens = []
+    # for token in token_list:
+    #     if len(token) == 1 and token not in {"a", "i"}:
+    #         continue
+    #     if token.isdigit():
+    #         continue
+    #     filtered_tokens.append(token)  
 
     # Return token list
-    return filtered_tokens
+    return token_list
+    # return filtered_tokens
 
 
 def computeWordFrequencies(token_list):

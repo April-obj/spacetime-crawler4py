@@ -5,6 +5,9 @@ from urllib.parse import urlparse, urldefrag
 
 stats_lock = Lock()
 
+# page_lock = Lock()
+# STOP_CRAWL = False
+
 pages_crawled = 0
 MAX_PAGES_TO_CRAWL = 25 # Testing
 
@@ -24,15 +27,15 @@ subdomains = defaultdict(int)
 
 
 def increment_page_count():
-    global pages_crawled
+    global pages_crawled, STOP_CRAWL
     with stats_lock:
         pages_crawled += 1
-        if pages_crawled % 100 == 0:
-            print(f"---Crawled {pages_crawled} pages---")
+        # if pages_crawled % 100 == 0:
+        #     print(f"---Crawled {pages_crawled} pages---")
         return pages_crawled >= MAX_PAGES_TO_CRAWL
 
 def unique_url(url):
-    cleaned_url = urldefrag(url)
+    cleaned_url, _ = urldefrag(url)
     with stats_lock:
         unique_urls.add(cleaned_url)
 
@@ -65,7 +68,13 @@ STOP_WORDS = {
     "weren't", "what", "what's", "when", "when's", "where", "where's", "which",
     "while", "who", "who's", "whom", "why", "why's", "with", "won't", "would",
     "wouldn't", "you", "you'd", "you'll", "you're", "you've", "your", "yours",
-    "yourself", "yourselves"
+    "yourself", "yourselves",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
+    "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", 
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "00", "01", "02", "03", "04", "05", "06", "07", "08", "09",
+    "10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
+    "20", "30", "40", "50", "60", "70", "80", "90",
 }
 
 def update_word_freq(curr_freq):
